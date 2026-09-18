@@ -1,0 +1,42 @@
+name: Visa slot monitor
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - run: npm ci
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - run: npx playwright install --with-deps chromium
+
+      - name: Run availability check
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: node recon/monitor.js
+
+      - name: Upload run artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: monitor-out-${{ github.run_id }}
+          path: recon/out/
+          retention-days: 3
+          if-no-files-found: ignore

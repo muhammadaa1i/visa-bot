@@ -31,6 +31,25 @@ function notifyDesktop(title, message) {
   });
 }
 
+async function notifyTelegram(message) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_CHAT_ID;
+  if (!token || !chatId) {
+    log('WARN: TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID not set, skipping Telegram notification.');
+    return;
+  }
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text: message }),
+    });
+    if (!res.ok) log(`WARN: Telegram notification failed: HTTP ${res.status}`);
+  } catch (err) {
+    log(`WARN: Telegram notification failed: ${err.message}`);
+  }
+}
+
 async function checkAvailability() {
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext();
@@ -77,6 +96,7 @@ async function checkAvailability() {
         `Available slot(s) detected at ${new Date().toISOString()}\n${summary}\n\nOpen ${CALENDAR_URL} now.\nScreenshots/HTML saved in recon/out/AVAILABLE-*.\n`
       );
       notifyDesktop('Visa slot available!', `Found availability: ${summary}. Open the calendar now.`);
+      await notifyTelegram(`🚨 Visa slot available!\n${summary}\n\nOpen ${CALENDAR_URL} now.`);
     } else {
       log(`No slots found in the next ${MONTHS_TO_CHECK} months.`);
       if (fs.existsSync(ALERT_FILE)) fs.unlinkSync(ALERT_FILE);

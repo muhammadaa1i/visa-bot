@@ -25,12 +25,29 @@ user explicitly overrides them for a specific case.
    - **D**ependency Inversion — modules depend on abstractions (ports), not on
      concrete infra (Playwright, a specific DB, a specific HTTP client). Wire
      concrete implementations at the composition root only.
-3. **CQRS**: separate the write side (commands: `RegisterClientCommand`,
-   `BookSlotCommand`) from the read side (queries: `GetAvailableSlotsQuery`,
-   `GetClientStatusQuery`). Commands mutate state and return
-   nothing/an id/an ack — never a full read model. Queries never mutate state.
-   Each command/query has its own handler class in its own file
-   (`commands/book-slot.command.ts` + `commands/book-slot.handler.ts`, etc.).
+3. **Architecture pattern**: Command pattern + Ports & Adapters (Hexagonal) +
+   State Machine for conversations — chosen over full CQRS as the better fit
+   for this project's actual size (a handful of operations on one small
+   entity, not a domain complex enough to need separate read/write models).
+   - **Commands** (`src/commands/*.handler.js`): one class per write
+     operation (`RegisterClientHandler`, later `BookSlotHandler`), each with
+     a single `handle(input)` method. `input` is a plain object — add a
+     dedicated command-factory file only if constructing it requires real
+     logic (defaults, derived fields), never as a pass-through wrapper
+     around an object literal.
+   - **Queries** (`src/queries/*.handler.js`): one class per read operation,
+     `handle(...)` taking whatever primitives/plain object it needs directly.
+     Never mutate state. No separate query-object file for a query that
+     takes zero or one trivial parameter — that's ceremony, not structure.
+   - **Ports & Adapters** (`src/ports/*.port.js` + `src/infra/*.js`):
+     business logic depends only on port interfaces (`ClientRepository`,
+     `Notifier`), never on concrete infra (Telegraf, a specific file format,
+     Playwright). Concrete adapters are wired at the composition root
+     (`src/bot/telegram-bot.js`, `src/index.js`) only.
+   - **State machine** (`src/bot/conversation-state.js` +
+     `*-conversation.js`): multi-step Telegram conversations (like
+     `/register`) are modeled as an explicit per-chat step + data state,
+     not scattered boolean flags.
 4. **Scalability**: the booking engine must support N clients queued
    independently. No global mutable state, no shared singletons holding
    per-client data. Client work items go through a queue/worker model so
@@ -94,7 +111,16 @@ by what recon learned.
 
 ## Deployment target
 
-Must run on a free-tier server. Prefer a lightweight polling worker (plain
-HTTP, no headless browser) for the read side; only spin up Playwright
-on-demand for the write side (actual booking), since headless Chromium is too
-heavy to keep resident on free tiers.
+Everything (the Telegram registration bot, the calendar monitor, and the
+eventual booking command) runs together on a single always-on free-tier VM
+(Oracle Cloud Always Free), not split across the local machine and a separate
+CI/cloud-routine service. The split tried earlier failed for two independent
+reasons worth remembering:
+- Anthropic's Claude Code cloud routine sandbox blocks outbound access to
+  arbitrary external hosts by policy — it could never reach the embassy site.
+- Splitting the Telegram bot (local) from the monitor (GitHub Actions) meant
+  the two never shared the same `data/clients.json` — the monitor had no way
+  to know who to book for.
+
+One VM, one process (or a couple of cooperating processes) sharing local
+disk, avoids both problems.

@@ -20,6 +20,7 @@ function log(message) {
 }
 
 function notifyDesktop(title, message) {
+  if (process.platform !== 'win32') return;
   const escaped = message.replace(/"/g, '`"');
   const escapedTitle = title.replace(/"/g, '`"');
   execFile('powershell.exe', [
@@ -73,8 +74,9 @@ async function checkAvailability() {
 
       const nextBtn = page.locator('a.next01.js_change_date');
       if (await nextBtn.count() === 0) break;
-      await nextBtn.click();
-      await page.waitForTimeout(1200);
+      await page.keyboard.press('Escape').catch(() => {});
+      await nextBtn.click({ force: true, timeout: 15000 });
+      await page.waitForTimeout(1500);
     }
   } finally {
     await browser.close();

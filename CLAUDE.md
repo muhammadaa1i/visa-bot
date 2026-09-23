@@ -21,7 +21,10 @@ built to handle multiple clients (applicants) in parallel.
   availability changes; on each new opening it also clicks through date →
   time → applicant form and saves every page, the XHR log and the form's
   field names to `recon/out/FLOW-<timestamp>/` (never fills or submits).
-  That capture is what the booking command gets built from. On the VM it runs as the systemd service in
+  That capture is what the booking command gets built from. It watches
+  itself via Telegram (no PC-side checks): ⚠️ after 5 failed passes in a
+  row, ✅ on recovery, and a daily "alive" message at 09:00 Tashkent time —
+  a missing daily message means the VM itself is down. On the VM it runs as the systemd service in
   `deploy/visa-monitor.service`; the old GitHub Actions workflow is gone.
 - Other recon scripts (run directly with `node`):
   - `node recon/inspect.js` — Playwright script that records all network

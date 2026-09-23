@@ -147,39 +147,90 @@ async function captureBookingFlow(monthIndex) {
 const PAUSE_MIN_MS = 30_000;
 const PAUSE_JITTER_MS = 15_000;
 
+const FAILURE_ALERT_THRESHOLD = 5;
+const HEARTBEAT_HOUR_TASHKENT = 9;
+const TASHKENT_OFFSET_MS = 5 * 60 * 60 * 1000;
+
 let lastAlertedSummary = '';
+let consecutiveFailures = 0;
+let failureAlertSent = false;
+let lastHeartbeatDate = '';
+let passesSinceHeartbeat = 0;
+let failuresSinceHeartbeat = 0;
+
+// A daily "alive" message is the only way to notice the whole server being down: the alert just stops arriving.
+async function maybeSendHeartbeat() {
+  const tashkentNow = new Date(Date.now() + TASHKENT_OFFSET_MS).toISOString();
+  const today = tashkentNow.slice(0, 10);
+  const hour = Number(tashkentNow.slice(11, 13));
+  if (hour < HEARTBEAT_HOUR_TASHKENT || today === lastHeartbeatDate) return;
+
+  await notifyTelegram(
+    `✅ Visa monitor alive.\nChecks since last report: ${passesSinceHeartbeat} (failed: ${failuresSinceHeartbeat}).\n${lastAlertedSummary ? `Open now: ${lastAlertedSummary}` : 'No open slots right now.'}`
+  );
+  lastHeartbeatDate = today;
+  passesSinceHeartbeat = 0;
+  failuresSinceHeartbeat = 0;
+}
+
+async function recordPassResult(err) {
+  passesSinceHeartbeat++;
+  if (!err) {
+    if (failureAlertSent) await notifyTelegram('✅ Visa monitor recovered, checks are working again.');
+    consecutiveFailures = 0;
+    failureAlertSent = false;
+    return;
+  }
+
+  failuresSinceHeartbeat++;
+  consecutiveFailures++;
+  if (consecutiveFailures >= FAILURE_ALERT_THRESHOLD && !failureAlertSent) {
+    await notifyTelegram(
+      `⚠️ Visa monitor: the last ${consecutiveFailures} checks failed, so slots may be missed.\nLatest error: ${err.message.slice(0, 300)}`
+    );
+    failureAlertSent = true;
+  }
+}
 
 async function runPass() {
   try {
-    const found = await checkAvailability();
-
-    if (found.length > 0) {
-      const summary = found.map((f) => `${f.monthLabel} (${f.circleCount} slot cell(s))`).join(', ');
-      log(`SLOT FOUND: ${summary}`);
-      fs.writeFileSync(
-        ALERT_FILE,
-        `Available slot(s) detected at ${new Date().toISOString()}\n${summary}\n\nOpen ${CALENDAR_URL} now.\nScreenshots/HTML saved in recon/out/AVAILABLE-*.\n`
-      );
-      // Alert only when availability changes, so an open slot doesn't spam Telegram every pass.
-      if (summary !== lastAlertedSummary) {
-        notifyDesktop('Visa slot available!', `Found availability: ${summary}. Open the calendar now.`);
-        await notifyTelegram(`🚨 Visa slot available!\n${summary}\n\nOpen ${CALENDAR_URL} now.`);
-        lastAlertedSummary = summary;
-
-        try {
-          const dir = await captureBookingFlow(found[0].monthIndex);
-          log(`Booking flow captured to ${dir}`);
-        } catch (err) {
-          log(`ERROR: booking flow capture failed (partial pages may still be saved): ${err.stack || err.message}`);
-        }
-      }
-    } else {
-      log(`No slots found in the next ${MONTHS_TO_CHECK} months.`);
-      lastAlertedSummary = '';
-      if (fs.existsSync(ALERT_FILE)) fs.unlinkSync(ALERT_FILE);
-    }
+    await checkAndAlert();
+    await recordPassResult(null);
   } catch (err) {
     log(`ERROR: ${err.stack || err.message}`);
+    await recordPassResult(err);
+  }
+  await maybeSendHeartbeat();
+}
+
+async function checkAndAlert() {
+  const found = await checkAvailability();
+
+  if (found.length === 0) {
+    log(`No slots found in the next ${MONTHS_TO_CHECK} months.`);
+    lastAlertedSummary = '';
+    if (fs.existsSync(ALERT_FILE)) fs.unlinkSync(ALERT_FILE);
+    return;
+  }
+
+  const summary = found.map((f) => `${f.monthLabel} (${f.circleCount} slot cell(s))`).join(', ');
+  log(`SLOT FOUND: ${summary}`);
+  fs.writeFileSync(
+    ALERT_FILE,
+    `Available slot(s) detected at ${new Date().toISOString()}\n${summary}\n\nOpen ${CALENDAR_URL} now.\nScreenshots/HTML saved in recon/out/AVAILABLE-*.\n`
+  );
+  // Alert only when availability changes, so an open slot doesn't spam Telegram every pass.
+  if (summary === lastAlertedSummary) return;
+
+  notifyDesktop('Visa slot available!', `Found availability: ${summary}. Open the calendar now.`);
+  await notifyTelegram(`🚨 Visa slot available!\n${summary}\n\nOpen ${CALENDAR_URL} now.`);
+  lastAlertedSummary = summary;
+
+  try {
+    const dir = await captureBookingFlow(found[0].monthIndex);
+    log(`Booking flow captured to ${dir}`);
+  } catch (err) {
+    log(`ERROR: booking flow capture failed (partial pages may still be saved): ${err.stack || err.message}`);
   }
 }
 

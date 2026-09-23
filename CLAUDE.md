@@ -9,10 +9,11 @@ built to handle multiple clients (applicants) in parallel.
 - `npm start` — runs the Telegram bot (`src/index.js` via `node --env-file=.env`).
   Requires `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in `.env`; the process
   throws immediately on startup if either is missing.
-- No test suite exists yet — `npm test` is an unset stub that exits 1. No
-  linter/formatter is configured either. Don't assume `npm run lint` or a
-  test runner exists; if asked to add tests, a framework has to be chosen and
-  wired up first.
+- `npm test` — runs `test/booking.test.js`: the real booker and
+  `BookSlotsHandler` against a local fake of the embassy site
+  (`test/fake-embassy-site.js`, 127.0.0.1 only — never the real site), one
+  scenario per form shape/outcome. Plain Node script, no test framework;
+  needs Playwright's Chromium installed. No linter/formatter is configured.
 - `npm run monitor` — the standalone Playwright slot-availability monitor
   (`recon/monitor.js`, loads `.env` for the Telegram alert). Runs forever,
   checking the current month + the next 2 each pass with a 30–45s pause
@@ -36,8 +37,23 @@ built to handle multiple clients (applicants) in parallel.
 
 ## Current implementation state (src/)
 
-Only the client-registration slice is built; the booking command
-(`BookSlotHandler`) does not exist yet. Composition root is `src/index.js` →
+Automatic booking (`BookSlotsHandler`, `src/commands/book-slots.handler.js`)
+runs inside the bot process, since the bot is the only writer of
+`data/clients.json`. `src/index.js` wires it: `SlotSignalFileWatcher` fires
+when the monitor creates `recon/out/ALERT.txt`, and the handler books pending
+clients oldest-first, one slot each, via the `SlotBooker` port
+(`PlaywrightSlotBooker`). The real booking form has never been seen, so the
+booker is built to handle unknown forms safely:
+- `form-field-classifier.js` recognizes fields by label (EN/JA/RU/UZ); the
+  booker submits only if every required field is recognized, otherwise
+  `HELD_BACK` with the unknown labels sent to the owner.
+- Phases `NOTHING_SENT → DETAILS_SENT → FINAL_SENT`; after the confirmation
+  page is submitted it never clicks again. Results/errors are judged only on
+  text that's new vs. the previous page (step indicators repeat everywhere).
+- The client is set to `booking` in `beforeSubmit` before any applicant data
+  is sent; `booking` is never retried automatically (no double-booking).
+
+Composition root is `src/index.js` →
 `createTelegramBot()` in `src/bot/telegram-bot.js`, which is the only file
 that touches Telegraf directly and wires:
 - `RegisterClientHandler` (`src/commands/register-client.handler.js`) — the

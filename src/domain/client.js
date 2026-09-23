@@ -6,6 +6,9 @@ export const VISA_CATEGORIES = Object.freeze({
 
 export const CLIENT_STATUS = Object.freeze({
   PENDING: 'pending',
+  // Submitted to the site, outcome not yet known. Never retried automatically, to avoid double-booking.
+  BOOKING: 'booking',
+  AWAITING_EMAIL_CONFIRMATION: 'awaiting_email_confirmation',
   BOOKED: 'booked',
   FAILED: 'failed',
 });

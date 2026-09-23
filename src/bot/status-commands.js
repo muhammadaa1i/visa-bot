@@ -1,5 +1,7 @@
 const STATUS_LABELS = Object.freeze({
   pending: 'waiting for a slot',
+  booking: 'booking in progress ⏳',
+  awaiting_email_confirmation: 'reserved — confirm it via the link in the embassy email ⏳',
   booked: 'booked ✅',
   failed: 'booking failed ⚠️',
 });

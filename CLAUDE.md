@@ -155,8 +155,10 @@ by what recon learned.
   fetched via `POST https://uzembassyryouji.rsvsys.jp/ajax/reservations/calendar`
   with form-encoded body (`category`, `event`, `plan`, `date`, `disp_type`,
   plus the CSRF/token fields), returning `{"html": "..."}` — the calendar HTML
-  fragment to re-parse for slot availability (`icon_circle` = available,
-  `icon_disabled` = not available).
+  fragment to re-parse for slot availability (`icon_disabled` = not
+  available; `icon_circle` = available is assumed but has never been seen
+  live, so the monitor treats any date cell not marked `icon_disabled` as
+  possibly open).
 - Deeper flow (date → time slot → applicant details → email confirmation)
   goes through further AJAX endpoints under `/ajax/reservations/*`
   (`interval-stock`, `staff-stock`, `calendar-select-plan`,

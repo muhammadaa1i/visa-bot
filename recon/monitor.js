@@ -51,6 +51,11 @@ async function notifyTelegram(message) {
   }
 }
 
+// No open date has ever been observed live, so rather than trusting a guessed "available" icon,
+// any date cell whose mark isn't the ✕ counts as possibly open: a false alarm beats a silent miss.
+const SHORT_STAY_APPLICANT_EVENT_ID = '20';
+const OPEN_CELL ='.sc_cal_month_itemlist .c_cal_time_cell:not(:has(img[src*="icon_disabled"]))';
+
 async function checkAvailability() {
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext();
@@ -61,11 +66,17 @@ async function checkAvailability() {
   try {
     await page.goto(CALENDAR_URL, { waitUntil: 'networkidle', timeout: 60000 });
 
+    // We rely on the site's default calendar being "short stay (Applicant)"; fail loudly if that changes.
+    const eventId = await page.locator('input.js-event').first().inputValue();
+    if (eventId !== SHORT_STAY_APPLICANT_EVENT_ID) {
+      throw new Error(`Calendar default changed: expected event ${SHORT_STAY_APPLICANT_EVENT_ID} (short stay, Applicant), got ${eventId}`);
+    }
+
     for (let i = 0; i < MONTHS_TO_CHECK; i++) {
-      const circleCount = await page.locator('img[src*="icon_circle"]').count();
-      if (circleCount > 0) {
+      const openCount = await page.locator(OPEN_CELL).count();
+      if (openCount > 0) {
         const monthLabel = await page.locator('.c_cal_navex_date .date').innerText().catch(() => `month index ${i}`);
-        found.push({ monthIndex: i, monthLabel: monthLabel.trim(), circleCount });
+        found.push({ monthIndex: i, monthLabel: monthLabel.replace(/\s+/g, ' ').trim(), openCount });
 
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
         await page.screenshot({ path: path.join(OUT_DIR, `AVAILABLE-${timestamp}.png`), fullPage: true });
@@ -119,12 +130,12 @@ async function captureBookingFlow(monthIndex) {
     }
     await save('01-month');
 
-    await page.locator('a:has(img[src*="icon_circle"])').first().click({ timeout: 15000 });
+    await page.locator(OPEN_CELL).first().click({ timeout: 15000 });
     await settle();
     await save('02-after-date-click');
 
     // If the date click opened a time-slot view rather than the form, pick the first open time.
-    const timeSlot = page.locator('a.js_move_reserve:has(img[src*="icon_circle"])').first();
+    const timeSlot = page.locator('a.js_move_reserve:not(.js_not_move):not(:has(img[src*="icon_disabled"]))').first();
     if (await timeSlot.count() > 0) {
       await timeSlot.click({ timeout: 15000 });
       await settle();
@@ -213,7 +224,7 @@ async function checkAndAlert() {
     return;
   }
 
-  const summary = found.map((f) => `${f.monthLabel} (${f.circleCount} slot cell(s))`).join(', ');
+  const summary = found.map((f) => `${f.monthLabel} (${f.openCount} date(s) not marked ✕)`).join(', ');
   log(`SLOT FOUND: ${summary}`);
   fs.writeFileSync(
     ALERT_FILE,

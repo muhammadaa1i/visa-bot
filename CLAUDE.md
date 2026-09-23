@@ -18,7 +18,10 @@ built to handle multiple clients (applicants) in parallel.
   checking the current month + the next 2 each pass with a 30–45s pause
   between passes (don't shorten it — that's the rate limit). Runs on the VM
   only, not on the dev PC. Telegram alerts fire only when
-  availability changes. On the VM it runs as the systemd service in
+  availability changes; on each new opening it also clicks through date →
+  time → applicant form and saves every page, the XHR log and the form's
+  field names to `recon/out/FLOW-<timestamp>/` (never fills or submits).
+  That capture is what the booking command gets built from. On the VM it runs as the systemd service in
   `deploy/visa-monitor.service`; the old GitHub Actions workflow is gone.
 - Other recon scripts (run directly with `node`):
   - `node recon/inspect.js` — Playwright script that records all network

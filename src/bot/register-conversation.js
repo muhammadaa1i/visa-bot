@@ -1,17 +1,9 @@
-import { Markup } from 'telegraf';
 import { VISA_CATEGORIES } from '../domain/client.js';
 import { RegisterClientValidationError } from '../commands/register-client.handler.js';
 
 const STEPS = Object.freeze({
   AWAITING_NAME: 'awaiting_name',
   AWAITING_EMAIL: 'awaiting_email',
-  AWAITING_CATEGORY: 'awaiting_category',
-});
-
-const CATEGORY_LABELS = Object.freeze({
-  [VISA_CATEGORIES.SHORT_STAY]: 'Short stay (tourism/business/family, up to 90 days)',
-  [VISA_CATEGORIES.COE]: 'With Certificate of Eligibility (COE)',
-  [VISA_CATEGORIES.GOVERNMENT_DOCUMENTS]: 'With Government Documents',
 });
 
 /**
@@ -53,49 +45,29 @@ export class RegisterConversation {
     }
 
     if (current.step === STEPS.AWAITING_EMAIL) {
-      this.state.advance(chatId, STEPS.AWAITING_CATEGORY, { email: text });
+      try {
+        await this.registerClientHandler.handle({
+          telegramChatId: chatId,
+          fullName: current.data.fullName,
+          email: text,
+          visaCategory: VISA_CATEGORIES.SHORT_STAY,
+        });
+      } catch (err) {
+        if (err instanceof RegisterClientValidationError) {
+          await ctx.reply(`${err.message} Please send it again.`);
+          return true;
+        }
+        this.state.clear(chatId);
+        throw err;
+      }
+
+      this.state.clear(chatId);
       await ctx.reply(
-        'Which visa category applies?',
-        Markup.inlineKeyboard(
-          Object.entries(CATEGORY_LABELS).map(([value, label]) => [Markup.button.callback(label, `register_category:${value}`)])
-        )
+        `You're registered for a short-stay visa appointment, ${current.data.fullName}. We'll book an appointment for you as soon as one opens.`
       );
       return true;
     }
 
     return false;
-  }
-
-  /** @param {import('telegraf').Context} ctx @param {string} visaCategory */
-  async handleCategorySelected(ctx, visaCategory) {
-    const chatId = ctx.chat.id;
-    const current = this.state.get(chatId);
-    if (!current || current.step !== STEPS.AWAITING_CATEGORY) {
-      await ctx.answerCbQuery('This selection has expired, please run /register again.');
-      return;
-    }
-
-    try {
-      await this.registerClientHandler.handle({
-        telegramChatId: chatId,
-        fullName: current.data.fullName,
-        email: current.data.email,
-        visaCategory,
-      });
-      await ctx.answerCbQuery('Registered!');
-      await ctx.editMessageText(
-        `You're registered, ${current.data.fullName}. You'll be notified here as soon as we book a slot for you.`
-      );
-    } catch (err) {
-      if (err instanceof RegisterClientValidationError) {
-        await ctx.answerCbQuery();
-        await ctx.editMessageText(`Couldn't register: ${err.message} Please run /register again.`);
-      } else {
-        await ctx.answerCbQuery('Something went wrong.');
-        throw err;
-      }
-    } finally {
-      this.state.clear(chatId);
-    }
   }
 }

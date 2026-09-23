@@ -33,8 +33,6 @@ export function createTelegramBot({ botToken, ownerChatId, clientRepository }) {
   bot.command('mystatus', (ctx) => statusCommands.handleMyStatus(ctx));
   bot.command('list', (ctx) => statusCommands.handleListPending(ctx));
 
-  bot.action(/^register_category:(.+)$/, (ctx) => registerConversation.handleCategorySelected(ctx, ctx.match[1]));
-
   bot.on('text', async (ctx, next) => {
     const handled = await registerConversation.handleText(ctx);
     if (!handled) return next();

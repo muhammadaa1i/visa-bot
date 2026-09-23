@@ -49,7 +49,8 @@ that touches Telegraf directly and wires:
 - `RegisterConversation` + `ConversationState`
   (`src/bot/register-conversation.js`, `src/bot/conversation-state.js`) — the
   `/register` wizard's state machine (`awaiting_name` →
-  `awaiting_email` → `awaiting_category`), keyed per Telegram chat id in an
+  `awaiting_email`, then saves; every client is short stay (Applicant),
+  the only calendar the monitor watches, so there's no category step), keyed per Telegram chat id in an
   in-memory `Map`. State is not persisted, so an in-flight `/register` is
   lost on bot restart — acceptable today since it's re-askable, but relevant
   if a longer wizard is ever added.

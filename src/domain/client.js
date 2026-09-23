@@ -2,8 +2,6 @@ import { randomUUID } from 'crypto';
 
 export const VISA_CATEGORIES = Object.freeze({
   SHORT_STAY: 'short_stay',
-  COE: 'coe',
-  GOVERNMENT_DOCUMENTS: 'government_documents',
 });
 
 export const CLIENT_STATUS = Object.freeze({

@@ -56,6 +56,21 @@ async function notifyTelegram(message) {
 const SHORT_STAY_APPLICANT_EVENT_ID = '20';
 const OPEN_CELL ='.sc_cal_month_itemlist .c_cal_time_cell:not(:has(img[src*="icon_disabled"]))';
 
+const MAX_UNEXPECTED_SNAPSHOTS = 20;
+
+async function saveUnexpectedPage(page) {
+  const name = `UNEXPECTED-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+  await page.screenshot({ path: path.join(OUT_DIR, `${name}.png`), fullPage: true }).catch(() => {});
+  fs.writeFileSync(path.join(OUT_DIR, `${name}.html`), await page.content().catch((err) => `[unreadable: ${err.message}]`));
+
+  const old = fs.readdirSync(OUT_DIR).filter((f) => f.startsWith('UNEXPECTED-') && f.endsWith('.html')).sort();
+  for (const file of old.slice(0, -MAX_UNEXPECTED_SNAPSHOTS)) {
+    fs.rmSync(path.join(OUT_DIR, file), { force: true });
+    fs.rmSync(path.join(OUT_DIR, file.replace(/\.html$/, '.png')), { force: true });
+  }
+  return name;
+}
+
 async function checkAvailability() {
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext();
@@ -64,10 +79,18 @@ async function checkAvailability() {
   const found = [];
 
   try {
-    await page.goto(CALENDAR_URL, { waitUntil: 'networkidle', timeout: 60000 });
+    const response = await page.goto(CALENDAR_URL, { waitUntil: 'networkidle', timeout: 60000 });
+
+    // Now and then the site serves a page that isn't the calendar; keep a copy so we can see what it is.
+    const eventInput = page.locator('input.js-event').first();
+    if (!(await eventInput.waitFor({ timeout: 10000 }).then(() => true, () => false))) {
+      const shot = await saveUnexpectedPage(page);
+      const title = await page.title().catch(() => '');
+      throw new Error(`Not the calendar page (HTTP ${response?.status() ?? 'none'}, title "${title}", url ${page.url()}); saved ${shot}`);
+    }
 
     // We rely on the site's default calendar being "short stay (Applicant)"; fail loudly if that changes.
-    const eventId = await page.locator('input.js-event').first().inputValue();
+    const eventId = await eventInput.inputValue();
     if (eventId !== SHORT_STAY_APPLICANT_EVENT_ID) {
       throw new Error(`Calendar default changed: expected event ${SHORT_STAY_APPLICANT_EVENT_ID} (short stay, Applicant), got ${eventId}`);
     }

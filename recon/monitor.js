@@ -10,7 +10,7 @@ fs.mkdirSync(OUT_DIR, { recursive: true });
 
 const LOG_FILE = path.join(OUT_DIR, 'monitor.log');
 const ALERT_FILE = path.join(OUT_DIR, 'ALERT.txt');
-const MONTHS_TO_CHECK = 12;
+const MONTHS_TO_CHECK = 3;
 const CALENDAR_URL = 'https://uzembassyryouji.rsvsys.jp/reservations/calendar';
 
 function log(message) {
@@ -85,8 +85,13 @@ async function checkAvailability() {
   return found;
 }
 
-(async () => {
-  log('Monitor run starting...');
+// Pause between passes so our traffic looks like a person refreshing, not a bot hammering the site.
+const PAUSE_MIN_MS = 30_000;
+const PAUSE_JITTER_MS = 15_000;
+
+let lastAlertedSummary = '';
+
+async function runPass() {
   try {
     const found = await checkAvailability();
 
@@ -97,14 +102,24 @@ async function checkAvailability() {
         ALERT_FILE,
         `Available slot(s) detected at ${new Date().toISOString()}\n${summary}\n\nOpen ${CALENDAR_URL} now.\nScreenshots/HTML saved in recon/out/AVAILABLE-*.\n`
       );
-      notifyDesktop('Visa slot available!', `Found availability: ${summary}. Open the calendar now.`);
-      await notifyTelegram(`🚨 Visa slot available!\n${summary}\n\nOpen ${CALENDAR_URL} now.`);
+      // Alert only when availability changes, so an open slot doesn't spam Telegram every pass.
+      if (summary !== lastAlertedSummary) {
+        notifyDesktop('Visa slot available!', `Found availability: ${summary}. Open the calendar now.`);
+        await notifyTelegram(`🚨 Visa slot available!\n${summary}\n\nOpen ${CALENDAR_URL} now.`);
+        lastAlertedSummary = summary;
+      }
     } else {
       log(`No slots found in the next ${MONTHS_TO_CHECK} months.`);
+      lastAlertedSummary = '';
       if (fs.existsSync(ALERT_FILE)) fs.unlinkSync(ALERT_FILE);
     }
   } catch (err) {
     log(`ERROR: ${err.stack || err.message}`);
   }
-  log('Monitor run finished.');
-})();
+}
+
+log('Monitor started (continuous mode).');
+while (true) {
+  await runPass();
+  await new Promise((resolve) => setTimeout(resolve, PAUSE_MIN_MS + Math.random() * PAUSE_JITTER_MS));
+}

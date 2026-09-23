@@ -4,6 +4,61 @@ Automated monitoring/booking assistant for the Japan Embassy in Uzbekistan visa
 appointment calendar (`https://uzembassyryouji.rsvsys.jp/reservations/calendar`),
 built to handle multiple clients (applicants) in parallel.
 
+## Commands
+
+- `npm start` — runs the Telegram bot (`src/index.js` via `node --env-file=.env`).
+  Requires `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in `.env`; the process
+  throws immediately on startup if either is missing.
+- No test suite exists yet — `npm test` is an unset stub that exits 1. No
+  linter/formatter is configured either. Don't assume `npm run lint` or a
+  test runner exists; if asked to add tests, a framework has to be chosen and
+  wired up first.
+- `npm run monitor` — the standalone Playwright slot-availability monitor
+  (`recon/monitor.js`, loads `.env` for the Telegram alert). Runs forever,
+  checking the current month + the next 2 each pass with a 30–45s pause
+  between passes (don't shorten it — that's the rate limit). Runs on the VM
+  only, not on the dev PC. Telegram alerts fire only when
+  availability changes. On the VM it runs as the systemd service in
+  `deploy/visa-monitor.service`; the old GitHub Actions workflow is gone.
+- Other recon scripts (run directly with `node`):
+  - `node recon/inspect.js` — Playwright script that records all network
+    requests/responses on the calendar page to `recon/out/` for manual
+    inspection.
+  - `node recon/walkthrough.js` — Playwright script that logs XHR
+    request/response pairs while driving the booking flow; re-run this when
+    slots are open to capture the steps past calendar browsing.
+
+## Current implementation state (src/)
+
+Only the client-registration slice is built; the booking command
+(`BookSlotHandler`) does not exist yet. Composition root is `src/index.js` →
+`createTelegramBot()` in `src/bot/telegram-bot.js`, which is the only file
+that touches Telegraf directly and wires:
+- `RegisterClientHandler` (`src/commands/register-client.handler.js`) — the
+  one write operation so far; validates input and calls
+  `ClientRepository.save()`.
+- `GetPendingClientsHandler` / `GetClientsByChatIdHandler`
+  (`src/queries/*.handler.js`) — read paths backing the `/list` (owner-only)
+  and `/mystatus` bot commands, surfaced via `src/bot/status-commands.js`.
+- `RegisterConversation` + `ConversationState`
+  (`src/bot/register-conversation.js`, `src/bot/conversation-state.js`) — the
+  `/register` wizard's state machine (`awaiting_name` →
+  `awaiting_email` → `awaiting_category`), keyed per Telegram chat id in an
+  in-memory `Map`. State is not persisted, so an in-flight `/register` is
+  lost on bot restart — acceptable today since it's re-askable, but relevant
+  if a longer wizard is ever added.
+- `JsonClientRepository` (`src/infra/json-client-repository.js`) — the only
+  `ClientRepository` implementation; append-only JSON array at
+  `data/clients.json` (gitignored), writes serialized through an in-process
+  promise queue (`#enqueue`) plus temp-file-then-rename so concurrent
+  `save()`/`update()` calls can't corrupt the file. This is a single-writer
+  design — it assumes one process owns the file, which matches the
+  single-VM deployment target below but would need to change if the bot and
+  booking engine ever ran as separate processes.
+- Client shape and enums (`VISA_CATEGORIES`, `CLIENT_STATUS`) live in
+  `src/domain/client.js`; `createClient()` is the only place a `Client`
+  object gets constructed.
+
 ## Strict engineering rules (non-negotiable)
 
 These rules apply to every file in this repository, no exceptions, unless the

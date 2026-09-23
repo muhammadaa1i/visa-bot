@@ -1,0 +1,14 @@
+[Unit]
+Description=visa-bot slot availability monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/visa-bot
+ExecStart=/usr/bin/node --env-file=.env recon/monitor.js
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

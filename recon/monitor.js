@@ -83,7 +83,8 @@ async function checkAvailability() {
 
     // Now and then the site serves a page that isn't the calendar; keep a copy so we can see what it is.
     const eventInput = page.locator('input.js-event').first();
-    if (!(await eventInput.waitFor({ timeout: 10000 }).then(() => true, () => false))) {
+    // The field is type="hidden", so wait for it to exist in the page, not to be visible.
+    if (!(await eventInput.waitFor({ state: 'attached', timeout: 10000 }).then(() => true, () => false))) {
       const shot = await saveUnexpectedPage(page);
       const title = await page.title().catch(() => '');
       throw new Error(`Not the calendar page (HTTP ${response?.status() ?? 'none'}, title "${title}", url ${page.url()}); saved ${shot}`);

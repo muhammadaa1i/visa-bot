@@ -81,6 +81,25 @@ async function saveUnexpectedPage(page) {
   return name;
 }
 
+const MONTH_LABEL = '.c_cal_navex_date .date';
+
+// The next month arrives over AJAX. Counting before it lands re-counts the current month
+// (alerts showed "2026年10月, 2026年10月"), so wait for the month label to actually change.
+async function goToNextMonth(page) {
+  const nextBtn = page.locator('a.next01.js_change_date');
+  if (await nextBtn.count() === 0) return false;
+  const before = await page.locator(MONTH_LABEL).innerText();
+  await page.keyboard.press('Escape').catch(() => {});
+  await nextBtn.click({ force: true, timeout: 15000 });
+  await page.waitForFunction(
+    ([selector, previous]) => document.querySelector(selector)?.innerText !== previous,
+    [MONTH_LABEL, before],
+    { timeout: 15000 }
+  );
+  await page.waitForTimeout(1500);
+  return true;
+}
+
 async function checkAvailability() {
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext();
@@ -109,7 +128,7 @@ async function checkAvailability() {
     for (let i = 0; i < MONTHS_TO_CHECK; i++) {
       const openCount = await page.locator(OPEN_CELL).count();
       if (openCount > 0) {
-        const monthLabel = await page.locator('.c_cal_navex_date .date').innerText().catch(() => `month index ${i}`);
+        const monthLabel = await page.locator(MONTH_LABEL).innerText().catch(() => `month index ${i}`);
         found.push({ monthIndex: i, monthLabel: monthLabel.replace(/\s+/g, ' ').trim(), openCount });
 
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -117,11 +136,7 @@ async function checkAvailability() {
         fs.writeFileSync(path.join(OUT_DIR, `AVAILABLE-${timestamp}.html`), await page.content());
       }
 
-      const nextBtn = page.locator('a.next01.js_change_date');
-      if (await nextBtn.count() === 0) break;
-      await page.keyboard.press('Escape').catch(() => {});
-      await nextBtn.click({ force: true, timeout: 15000 });
-      await page.waitForTimeout(1500);
+      if (!(await goToNextMonth(page))) break;
     }
   } finally {
     await browser.close();
@@ -159,8 +174,7 @@ async function captureBookingFlow(monthIndex) {
   try {
     await page.goto(CALENDAR_URL, { waitUntil: 'networkidle', timeout: 60000 });
     for (let i = 0; i < monthIndex; i++) {
-      await page.locator('a.next01.js_change_date').click({ force: true, timeout: 15000 });
-      await page.waitForTimeout(1500);
+      if (!(await goToNextMonth(page))) throw new Error(`No next-month button at month index ${i}`);
     }
     await save('01-month');
 

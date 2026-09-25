@@ -10,13 +10,27 @@ const COMMON = `
 
 const page = (body) => `<!doctype html><html><head><meta charset="utf-8"></head><body>${COMMON}${body}</body></html>`;
 
-function calendar(open) {
+function calendar(open, dateHref) {
   const cell = (day, isOpen) => `<td><div class="sc_cal_month_itemlist"><div class="sc_cal_date">${day}</div>
-    <p class="c_cal_time_cell">${isOpen ? `<a href="/form"><img src="/assets/images/user/icon_circle.svg" width="24" height="24"></a>` : '<img src="/assets/images/user/icon_disabled.svg" width="24" height="24">'}</p></div></td>`;
+    <p class="c_cal_time_cell">${isOpen ? `<a href="${dateHref}"><img src="/assets/images/user/icon_circle.svg" width="24" height="24"></a>` : '<img src="/assets/images/user/icon_disabled.svg" width="24" height="24">'}</p></div></td>`;
   return page(`<form><input type="hidden" name="event" class="js-event" value="20"></form>
     <div class="c_cal_navex_date"><a href="#" class="next01 js_change_date">次月</a><div class="date">2026年 10月</div></div>
     <table><tr>${cell(13, false)}${cell(14, open)}${cell(15, false)}</tr></table>`);
 }
+
+// Mirrors the live site's day view (captured 2026-09-25): icon-only time links, and the open one
+// carries js_window_open_for_time, which makes the site's script open the form in a popup window.
+const dayView = () => page(`<table>
+    <tr><th>14:30</th><td><a class="c_cal_time_cell js_move_reserve js_not_move"><img src="/assets/images/user/icon_disabled.svg" width="24" height="24"></a></td></tr>
+    <tr><th>15:00</th><td><a href="/form?date=2026%2F10%2F14&amp;time_from=15%3A00" class="c_cal_time_cell js_move_reserve js_check_in_stock js_window_open_for_time"
+      data-url="/form?date=2026%2F10%2F14&amp;time_from=15%3A00&amp;isPopUpWindow=1"><img src="/assets/images/user/icon_circle.svg" width="24" height="24"></a></td></tr>
+  </table>
+  <script>
+    document.querySelector('.js_window_open_for_time').addEventListener('click', (e) => {
+      e.preventDefault();
+      window.open(e.currentTarget.dataset.url, 'reserve', 'width=900,height=700');
+    });
+  </script>`);
 
 const FORMS = {
   simple: `
@@ -54,7 +68,8 @@ export function startFakeSite(scenario) {
       res.setHeader('content-type', 'text/html; charset=utf-8');
       const url = req.url.split('?')[0];
 
-      if (url === '/calendar') return res.end(calendar(scenario !== 'no-open'));
+      if (url === '/calendar') return res.end(calendar(scenario !== 'no-open', scenario === 'popup' ? '/day' : '/form'));
+      if (url === '/day') return res.end(dayView());
 
       if (url === '/form') {
         if (scenario === 'taken') return res.end(page(`<div class="c_form_error">This slot is no longer available.</div><a class="c_btn" href="/calendar">戻る / Back</a>`));

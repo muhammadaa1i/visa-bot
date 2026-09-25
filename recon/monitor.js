@@ -152,9 +152,12 @@ async function captureBookingFlow(monthIndex) {
   fs.mkdirSync(dir, { recursive: true });
 
   const browser = await chromium.launch({ headless: true });
-  const page = await (await browser.newContext()).newPage();
+  const context = await browser.newContext();
+  // Reassigned when the time click opens the booking form in a popup window; save/settle follow it.
+  let page = await context.newPage();
   const xhr = [];
-  page.on('response', async (res) => {
+  // Recorded on the whole context so the popup window's requests are captured too.
+  context.on('response', async (res) => {
     const req = res.request();
     if (req.resourceType() !== 'xhr' && req.resourceType() !== 'fetch') return;
     const body = await res.text().catch((err) => `[unreadable: ${err.message}]`);
@@ -185,7 +188,10 @@ async function captureBookingFlow(monthIndex) {
     // If the date click opened a time-slot view rather than the form, pick the first open time.
     const timeSlot = page.locator('a.js_move_reserve:not(.js_not_move):not(:has(img[src*="icon_disabled"]))').first();
     if (await timeSlot.count() > 0) {
+      // On the live site this link opens the form in a popup window (js_window_open_for_time).
+      const popup = context.waitForEvent('page', { timeout: 10000 }).catch(() => null);
       await timeSlot.click({ timeout: 15000 });
+      page = (await popup) ?? page;
       await settle();
       await save('03-after-time-click');
     }

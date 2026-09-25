@@ -31,6 +31,10 @@ export class CalendarChangedError extends Error {
   name = 'CalendarChangedError';
 }
 
+export class PopupNotOpenedError extends Error {
+  name = 'PopupNotOpenedError';
+}
+
 export class PlaywrightSlotBooker extends SlotBooker {
   /**
    * @param {{ calendarUrl: string, expectedEventId: string, monthsToCheck: number, logger: import('./json-logger.js').Logger }} config
@@ -72,8 +76,11 @@ export class PlaywrightSlotBooker extends SlotBooker {
     // Text/warnings shared by every page (headers, step indicators like "Input > Confirm > Complete")
     // must not be read as a result, so each page is only judged on what's new compared to the one before.
     let previous = await readBookingPage(page);
-    const appointment = await this.#openFirstAvailableSlot(page);
-    if (appointment === null) return { outcome: BOOKING_OUTCOME.NO_SLOT };
+    const opened = await this.#openFirstAvailableSlot(page);
+    if (opened === null) return { outcome: BOOKING_OUTCOME.NO_SLOT };
+    const { appointment } = opened;
+    // The form may live in a popup window; from here on every read and click happens there.
+    page = opened.formPage;
 
     let phase = PHASE.NOTHING_SENT;
     for (let pageIndex = 0; pageIndex < MAX_PAGES; pageIndex++) {
@@ -99,7 +106,10 @@ export class PlaywrightSlotBooker extends SlotBooker {
       : { outcome: BOOKING_OUTCOME.UNCERTAIN, reason: `still no result after ${MAX_PAGES} pages`, appointment };
   }
 
-  /** @returns {Promise<string|null>} a readable appointment description, or null if nothing is open */
+  /**
+   * @returns {Promise<{ appointment: string, formPage: import('playwright').Page } | null>}
+   *   a readable appointment description and the page the form continues on, or null if nothing is open
+   */
   async #openFirstAvailableSlot(page) {
     for (let month = 0; month < this.monthsToCheck; month++) {
       const openDate = page.locator(OPEN_DATE).first();
@@ -114,13 +124,14 @@ export class PlaywrightSlotBooker extends SlotBooker {
         await settle(page);
 
         let time = '';
+        let formPage = page;
         const openTime = page.locator(OPEN_TIME).first();
         if ((await openTime.count()) > 0) {
-          time = await openTime.innerText().catch(() => '');
-          await openTime.click();
-          await settle(page);
+          time = await timeOfSlot(openTime);
+          formPage = await clickTimeSlot(page, openTime);
         }
-        return [monthLabel, day, time].map((s) => s.replace(/\s+/g, ' ').trim()).filter(Boolean).join(' ');
+        const appointment = [monthLabel, day, time].map((s) => s.replace(/\s+/g, ' ').trim()).filter(Boolean).join(' ');
+        return { appointment, formPage };
       }
       const next = page.locator(NEXT_MONTH);
       if ((await next.count()) === 0) return null;
@@ -184,6 +195,34 @@ export class PlaywrightSlotBooker extends SlotBooker {
     const nextPhase = phase === PHASE.NOTHING_SENT && asksForApplicantData ? PHASE.DETAILS_SENT : phase;
     return { action: 'continue', button: forward.handle, nextPhase };
   }
+}
+
+// On the live site the time slot is an icon-only link (seen 2026-09-25) whose href carries the time:
+// /reservations/option?...&date=2026%2F10%2F06&time_from=15%3A00
+async function timeOfSlot(link) {
+  const href = await link.getAttribute('href').catch(() => null);
+  const fromHref = href ? new URL(href, 'https://placeholder.invalid').searchParams.get('time_from') : null;
+  return fromHref ?? (await link.innerText().catch(() => ''));
+}
+
+// The live site's time slots carry "js_window_open_for_time": the site's script opens the booking
+// form in a popup window (900x700) instead of navigating the calendar tab, so follow it there.
+async function clickTimeSlot(page, link) {
+  const opensPopup = await link.evaluate((el) => el.classList.contains('js_window_open_for_time'));
+  if (!opensPopup) {
+    await link.click();
+    await settle(page);
+    return page;
+  }
+  const popupOpened = page.waitForEvent('popup', { timeout: STEP_TIMEOUT_MS });
+  popupOpened.catch(() => {}); // awaited below; this only stops an early rejection going unhandled
+  await link.click();
+  const popup = await popupOpened.catch((err) => {
+    throw new PopupNotOpenedError(`the time slot did not open the booking window (${err.message})`);
+  });
+  popup.setDefaultTimeout(STEP_TIMEOUT_MS);
+  await settle(popup);
+  return popup;
 }
 
 // "networkidle" never arrives on pages that keep a request open; the fixed waits still give the page time to render.

@@ -175,16 +175,19 @@ by what recon learned.
   with form-encoded body (`category`, `event`, `plan`, `date`, `disp_type`,
   plus the CSRF/token fields), returning `{"html": "..."}` — the calendar HTML
   fragment to re-parse for slot availability (`icon_disabled` = not
-  available; `icon_circle` = available is assumed but has never been seen
-  live, so the monitor treats any date cell not marked `icon_disabled` as
-  possibly open).
-- Deeper flow (date → time slot → applicant details → email confirmation)
-  goes through further AJAX endpoints under `/ajax/reservations/*`
-  (`interval-stock`, `staff-stock`, `calendar-select-plan`,
-  `calendar-plan-status`) — not yet fully captured live because no slots were
-  open in the observed 12-month window as of 2026-09-18. Re-run
-  `recon/walkthrough.js` when slots open to capture the remaining steps before
-  building the booking command handler.
+  available; `icon_circle` = available, first seen live 2026-09-25; the
+  monitor still treats any date cell not marked `icon_disabled` as possibly
+  open).
+- Deeper flow, seen live 2026-09-25: clicking an open date re-renders the
+  same page as a day view (`disp_type=day`, same AJAX endpoint) with one
+  icon-only link per time. The open one is
+  `a.js_move_reserve.js_window_open_for_time` with
+  `href="/reservations/option?event_id=20&event_plan_id=19&date=YYYY/MM/DD&time_from=HH:MM"`
+  and `data-stock` (free places); the site's script opens it in a **popup
+  window** (`data-url` adds `isPopUpWindow=1`), and the applicant form
+  continues there, not in the calendar tab. The form itself hasn't been
+  captured yet (the monitor's capture didn't follow the popup until then).
+  Slots opened and closed within minutes that day.
 - Because there are no client-rendered SPA calls beyond these AJAX POSTs,
   slot-availability polling can run as plain HTTP requests (cookie jar +
   token bookkeeping) without a full browser — reserve Playwright for the

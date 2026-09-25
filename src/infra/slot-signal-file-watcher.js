@@ -15,10 +15,15 @@ export class SlotSignalFileWatcher {
 
   /** @param {() => void} onSlotsOpened */
   start(onSlotsOpened) {
-    if (fs.existsSync(this.filePath)) onSlotsOpened();
-    // watchFile reports a missing file as mtimeMs 0, so 0 → non-zero means the file just appeared.
-    fs.watchFile(this.filePath, { interval: this.pollIntervalMs }, (current, previous) => {
-      if (previous.mtimeMs === 0 && current.mtimeMs !== 0) onSlotsOpened();
+    let present = fs.existsSync(this.filePath);
+    if (present) onSlotsOpened();
+    // watchFile reports a missing file as mtimeMs 0. Its `previous` can't be trusted for this: when a
+    // file disappears and reappears, `previous` on the reappearance still holds the stats from before
+    // it disappeared, which made every opening after the first go unnoticed. So track presence here.
+    fs.watchFile(this.filePath, { interval: this.pollIntervalMs }, (current) => {
+      const nowPresent = current.mtimeMs !== 0;
+      if (nowPresent && !present) onSlotsOpened();
+      present = nowPresent;
     });
   }
 

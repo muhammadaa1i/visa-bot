@@ -2,6 +2,10 @@
 import { startFakeSite } from './fake-embassy-site.js';
 import { PlaywrightSlotBooker } from '../src/infra/playwright-slot-booker.js';
 import { BookSlotsHandler } from '../src/commands/book-slots.handler.js';
+import { SlotSignalFileWatcher } from '../src/infra/slot-signal-file-watcher.js';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
 const silentLogger = { info() {}, warn() {}, error: (e, f) => console.log('   log.error', e, JSON.stringify(f)) };
 const applicant = { fullName: 'TEST PERSON', email: 'test.person@example.com' };
@@ -15,6 +19,7 @@ const expectations = {
   'no-open': { outcome: 'no_slot', beforeSubmit: 0, detailSubmissions: 0, finalSubmissions: 0 },
   taken: { outcome: 'no_slot', beforeSubmit: 0, detailSubmissions: 0, finalSubmissions: 0 },
   'book-another': { outcome: 'uncertain', beforeSubmit: 1, detailSubmissions: 1, finalSubmissions: 1 },
+  popup: { outcome: 'booked', beforeSubmit: 1, detailSubmissions: 1, finalSubmissions: 1 },
 };
 
 let failures = 0;
@@ -61,6 +66,29 @@ for (const [scenario, expected] of Object.entries(expectations)) {
   if (!ok) failures++;
   console.log(`${ok ? 'PASS' : 'FAIL'} handler queue: statuses=${statusHistory.join(',')} finalSubmissions=${site.stats.finalSubmissions}`);
   messages.forEach((m) => console.log(`     ${m}`));
+}
+
+// The monitor creates the alert file on every opening and deletes it when slots are gone; each
+// reappearance must trigger booking (on 2026-09-25 only the very first one ever did).
+{
+  const file = path.join(os.tmpdir(), `visa-bot-alert-test-${process.pid}.txt`);
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  let signals = 0;
+  const watcher = new SlotSignalFileWatcher(file, { pollIntervalMs: 50 });
+  watcher.start(() => signals++);
+  for (let i = 0; i < 3; i++) {
+    fs.writeFileSync(file, 'open');
+    await wait(300);
+    fs.writeFileSync(file, 'still open'); // the monitor rewrites it every pass while slots stay open
+    await wait(300);
+    fs.unlinkSync(file);
+    await wait(300);
+  }
+  watcher.stop();
+
+  const ok = signals === 3;
+  if (!ok) failures++;
+  console.log(`${ok ? 'PASS' : 'FAIL'} slot signal: file appeared 3 times, signals=${signals}`);
 }
 
 console.log(failures === 0 ? '\nALL PASSED' : `\n${failures} FAILED`);

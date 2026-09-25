@@ -32,23 +32,33 @@ function notifyDesktop(title, message) {
   });
 }
 
-async function notifyTelegram(message) {
+// Slot alerts also go to everyone in SLOT_ALERT_CHAT_IDS (comma-separated numeric chat ids, each of whom
+// must have pressed Start in the bot); failure/recovery/heartbeat messages stay with the owner only.
+function slotAlertChatIds() {
+  const extra = (process.env.SLOT_ALERT_CHAT_IDS ?? '').split(',').map((id) => id.trim()).filter(Boolean);
+  return [process.env.TELEGRAM_CHAT_ID, ...extra];
+}
+
+async function notifyTelegram(message, chatIds = [process.env.TELEGRAM_CHAT_ID]) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
-  const chatId = process.env.TELEGRAM_CHAT_ID;
-  if (!token || !chatId) {
+  if (!token || !chatIds[0]) {
     log('WARN: TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID not set, skipping Telegram notification.');
     return;
   }
-  try {
-    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text: message }),
-    });
-    if (!res.ok) log(`WARN: Telegram notification failed: HTTP ${res.status}`);
-  } catch (err) {
-    log(`WARN: Telegram notification failed: ${err.message}`);
-  }
+  // Sent in parallel so one unreachable recipient doesn't delay the others.
+  await Promise.all(chatIds.map(async (chatId) => {
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: chatId, text: message }),
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!res.ok) log(`WARN: Telegram notification to chat ${chatId} failed: HTTP ${res.status}`);
+    } catch (err) {
+      log(`WARN: Telegram notification to chat ${chatId} failed: ${err.message}`);
+    }
+  }));
 }
 
 // No open date has ever been observed live, so rather than trusting a guessed "available" icon,
@@ -258,7 +268,7 @@ async function checkAndAlert() {
   if (summary === lastAlertedSummary) return;
 
   notifyDesktop('Visa slot available!', `Found availability: ${summary}. Open the calendar now.`);
-  await notifyTelegram(`🚨 Visa slot available!\n${summary}\n\nOpen ${CALENDAR_URL} now.`);
+  await notifyTelegram(`🚨 Visa slot available!\n${summary}\n\nOpen ${CALENDAR_URL} now.`, slotAlertChatIds());
   lastAlertedSummary = summary;
 
   try {

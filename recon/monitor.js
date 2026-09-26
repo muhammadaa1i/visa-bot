@@ -299,6 +299,23 @@ async function checkAndAlert() {
   }
 }
 
+// Only one monitor may run. Stray copies (started outside systemd, 2026-09-23..26) doubled the
+// traffic to the site and every Telegram alert. /proc exists on the VM (Linux), where this runs;
+// checking the cmdline there means a PID reused by some other process after a reboot doesn't count.
+const PID_FILE = path.join(OUT_DIR, 'monitor.pid');
+function otherMonitorPid() {
+  const pid = Number(fs.existsSync(PID_FILE) ? fs.readFileSync(PID_FILE, 'utf8').trim() : NaN);
+  if (!pid || pid === process.pid) return null;
+  const cmdline = fs.existsSync(`/proc/${pid}/cmdline`) ? fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8') : '';
+  return cmdline.includes('monitor.js') ? pid : null;
+}
+const runningPid = otherMonitorPid();
+if (runningPid !== null) {
+  log(`Another monitor is already running (pid ${runningPid}); this copy (pid ${process.pid}, parent ${process.ppid}) exits.`);
+  process.exit(1);
+}
+fs.writeFileSync(PID_FILE, String(process.pid));
+
 log('Monitor started (continuous mode).');
 while (true) {
   await runPass();

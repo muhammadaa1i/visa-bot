@@ -8,11 +8,22 @@ import os from 'os';
 import path from 'path';
 
 const silentLogger = { info() {}, warn() {}, error: (e, f) => console.log('   log.error', e, JSON.stringify(f)) };
-const applicant = { fullName: 'TEST PERSON', email: 'test.person@example.com' };
+const applicant = {
+  familyName: 'PERSON', firstName: 'TEST', fullName: 'PERSON TEST', phone: '+998901234567', passportNumber: 'AB1234567', email: 'test.person@example.com',
+};
+// Registered before phone/passport were asked for.
+const legacyApplicant = { fullName: 'OLD CLIENT', email: 'old.client@example.com' };
+
+// What the live form's two pages must receive (checked on top of the outcome).
+const embassySubmitted = (stats) =>
+  JSON.stringify(stats.checklist) === JSON.stringify({ checked: ['1', '2', '3'], arrival: '15：00' }) &&
+  stats.applicant?.name1 === 'PERSON' && stats.applicant?.name2 === 'TEST' && stats.applicant?.free1 === '+998901234567' &&
+  stats.applicant?.free2 === 'AB1234567' && stats.applicant?.email === applicant.email && stats.applicant?.email_confirm === applicant.email &&
+  ['note1', 'note2', 'note3', 'note4'].every((k) => stats.applicant[k] === '');
 
 const expectations = {
   simple: { outcome: 'booked', beforeSubmit: 1, detailSubmissions: 1, finalSubmissions: 1 },
-  passport: { outcome: 'held_back', beforeSubmit: 0, detailSubmissions: 0, finalSubmissions: 0 },
+  passport: { outcome: 'booked', beforeSubmit: 1, detailSubmissions: 1, finalSubmissions: 1 },
   katakana: { outcome: 'held_back', beforeSubmit: 0, detailSubmissions: 0, finalSubmissions: 0 },
   'email-link': { outcome: 'awaiting_email_confirmation', beforeSubmit: 1, detailSubmissions: 1, finalSubmissions: 1 },
   rejected: { outcome: 'rejected', beforeSubmit: 1, detailSubmissions: 1, finalSubmissions: 0 },
@@ -20,20 +31,24 @@ const expectations = {
   taken: { outcome: 'no_slot', beforeSubmit: 0, detailSubmissions: 0, finalSubmissions: 0 },
   'book-another': { outcome: 'uncertain', beforeSubmit: 1, detailSubmissions: 1, finalSubmissions: 1 },
   popup: { outcome: 'booked', beforeSubmit: 1, detailSubmissions: 1, finalSubmissions: 1 },
+  embassy: { outcome: 'booked', beforeSubmit: 1, detailSubmissions: 1, finalSubmissions: 1, check: embassySubmitted },
+  'embassy legacy client': { scenario: 'embassy', applicant: legacyApplicant, outcome: 'held_back', beforeSubmit: 0, detailSubmissions: 0, finalSubmissions: 0 },
 };
 
 let failures = 0;
-for (const [scenario, expected] of Object.entries(expectations)) {
+for (const [name, { scenario = name, applicant: who = applicant, check, ...expected }] of Object.entries(expectations)) {
   const site = await startFakeSite(scenario);
   const booker = new PlaywrightSlotBooker({ calendarUrl: site.url, expectedEventId: '20', monthsToCheck: 1, logger: silentLogger });
   let beforeSubmitCalls = 0;
-  const result = await booker.book(applicant, { beforeSubmit: async () => { beforeSubmitCalls++; } });
+  const result = await booker.book(who, { beforeSubmit: async () => { beforeSubmitCalls++; } });
   site.server.close();
 
   const actual = { outcome: result.outcome, beforeSubmit: beforeSubmitCalls, ...site.stats };
-  const ok = Object.entries(expected).every(([k, v]) => actual[k] === v);
+  const ok = Object.entries(expected).every(([k, v]) => actual[k] === v) && (check === undefined || check(site.stats));
   if (!ok) failures++;
-  console.log(`${ok ? 'PASS' : 'FAIL'} ${scenario}: ${JSON.stringify(actual)}`);
+  const { checklist, applicant: submitted, ...counts } = actual;
+  console.log(`${ok ? 'PASS' : 'FAIL'} ${name}: ${JSON.stringify(counts)}`);
+  if (!ok && check) console.log(`     submitted: ${JSON.stringify({ checklist, submitted })}`);
   console.log(`     appointment=${JSON.stringify(result.appointment)} reason=${JSON.stringify(result.reason)} unknown=${JSON.stringify(result.unknownFields)}`);
 }
 

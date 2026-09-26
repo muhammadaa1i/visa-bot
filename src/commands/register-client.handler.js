@@ -1,8 +1,5 @@
 import { createClient, VISA_CATEGORIES } from '../domain/client.js';
-
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-export class RegisterClientValidationError extends Error {}
+import { normalizeApplicantDetails, InvalidApplicantDetailsError } from '../domain/applicant-details.js';
 
 export class RegisterClientHandler {
   /** @param {import('../ports/client-repository.port.js').ClientRepository} clientRepository */
@@ -11,28 +8,17 @@ export class RegisterClientHandler {
   }
 
   /**
-   * @param {{ telegramChatId: number, fullName: string, email: string, visaCategory: string }} command
+   * @param {{ telegramChatId: number, visaCategory: string, familyName: string, firstName: string, phone: string, passportNumber: string, email: string }} command
    * @returns {Promise<string>} the new client's id
+   * @throws {InvalidApplicantDetailsError}
    */
   async handle(command) {
-    const fullName = command.fullName?.trim();
-    if (!fullName) {
-      throw new RegisterClientValidationError('Full name is required.');
-    }
-    if (!EMAIL_PATTERN.test(command.email ?? '')) {
-      throw new RegisterClientValidationError('Email address is invalid.');
-    }
+    const details = normalizeApplicantDetails(command);
     if (!Object.values(VISA_CATEGORIES).includes(command.visaCategory)) {
-      throw new RegisterClientValidationError('Visa category is invalid.');
+      throw new InvalidApplicantDetailsError('Visa category is invalid.');
     }
 
-    const client = createClient({
-      telegramChatId: command.telegramChatId,
-      fullName,
-      email: command.email.trim(),
-      visaCategory: command.visaCategory,
-    });
-
+    const client = createClient({ telegramChatId: command.telegramChatId, visaCategory: command.visaCategory, ...details });
     await this.clientRepository.save(client);
     return client.id;
   }

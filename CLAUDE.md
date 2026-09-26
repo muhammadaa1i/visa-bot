@@ -44,11 +44,15 @@ runs inside the bot process, since the bot is the only writer of
 `data/clients.json`. `src/index.js` wires it: `SlotSignalFileWatcher` fires
 when the monitor creates `recon/out/ALERT.txt`, and the handler books pending
 clients oldest-first, one slot each, via the `SlotBooker` port
-(`PlaywrightSlotBooker`). The real booking form has never been seen, so the
-booker is built to handle unknown forms safely:
+(`PlaywrightSlotBooker`). The real form is known only from the owner's
+screenshots (2026-09-25, see "Target site mechanics"), never from saved HTML,
+so the booker still reads each page generically and handles surprises safely:
 - `form-field-classifier.js` recognizes fields by label (EN/JA/RU/UZ); the
   booker submits only if every required field is recognized, otherwise
-  `HELD_BACK` with the unknown labels sent to the owner.
+  `HELD_BACK` with the unknown labels sent to the owner. Two boxes under one
+  heading (Family name / First name) are told apart by the short text beside
+  each box (`ownLabel`); if two boxes still read as the same kind it holds back.
+  The arrival-time dropdown gets the clicked slot's time.
 - Phases `NOTHING_SENT → DETAILS_SENT → FINAL_SENT`; after the confirmation
   page is submitted it never clicks again. Results/errors are judged only on
   text that's new vs. the previous page (step indicators repeat everywhere).
@@ -66,9 +70,11 @@ that touches Telegraf directly and wires:
   and `/mystatus` bot commands, surfaced via `src/bot/status-commands.js`.
 - `RegisterConversation` + `ConversationState`
   (`src/bot/register-conversation.js`, `src/bot/conversation-state.js`) — the
-  `/register` wizard's state machine (`awaiting_name` →
-  `awaiting_email`, then saves; every client is short stay (Applicant),
-  the only calendar the monitor watches, so there's no category step), keyed per Telegram chat id in an
+  `/register` wizard's state machine: family name → first name (Latin) →
+  phone → passport number → email → yes/no confirmation of the summary, then
+  saves. Each answer is checked as it arrives by the normalizers in
+  `src/domain/applicant-details.js`. Every client is short stay (Applicant),
+  the only calendar the monitor watches, so there's no category step. Keyed per Telegram chat id in an
   in-memory `Map`. State is not persisted, so an in-flight `/register` is
   lost on bot restart — acceptable today since it's re-askable, but relevant
   if a longer wizard is ever added.
@@ -185,9 +191,21 @@ by what recon learned.
   `href="/reservations/option?event_id=20&event_plan_id=19&date=YYYY/MM/DD&time_from=HH:MM"`
   and `data-stock` (free places); the site's script opens it in a **popup
   window** (`data-url` adds `isPopUpWindow=1`), and the applicant form
-  continues there, not in the calendar tab. The form itself hasn't been
-  captured yet (the monitor's capture didn't follow the popup until then).
-  Slots opened and closed within minutes that day.
+  continues there, not in the calendar tab. Slots opened and closed within
+  minutes that day.
+- The popup form (owner's screenshots, 2026-09-25; not yet saved as HTML):
+  1. `/reservations/form?event_id=20&event_plan_id=19&date=…&time_from=…&isPopUpWindow=1`:
+     an applicant notice, a required "確認事項 / Checklist" of three
+     checkboxes labelled only 1, 2, 3, a required arrival-time dropdown
+     ("来館時間 … Please select your arrival time (for Visa)", options 9:30,
+     10:00, …), then Back / Next.
+  2. `/reservations/user/guest` ("Applicant Information"): required Full Name
+     (Latin) as two boxes, "Family name" and "First name"; Phone number;
+     Email address; Passport number; Email address (re-enter); optional
+     (任意) Remarks (for proxy applications: agency or company name), then
+     Back / Next.
+  3. Presumably a confirmation page and a completion page (not seen yet).
+  `test/fake-embassy-site.js` scenario `embassy` mirrors this.
 - Because there are no client-rendered SPA calls beyond these AJAX POSTs,
   slot-availability polling can run as plain HTTP requests (cookie jar +
   token bookkeeping) without a full browser — reserve Playwright for the

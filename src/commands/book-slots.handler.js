@@ -63,7 +63,8 @@ export class BookSlotsHandler {
 
     let result;
     try {
-      result = await this.slotBooker.book({ fullName: client.fullName, email: client.email }, { beforeSubmit });
+      const { familyName, firstName, fullName, phone, passportNumber, email } = client;
+      result = await this.slotBooker.book({ familyName, firstName, fullName, phone, passportNumber, email }, { beforeSubmit });
     } catch (err) {
       this.logger.error('booking_attempt_crashed', { clientId: client.id, submitted, errorName: err.name, error: err.message });
       await this.#tellOwner(

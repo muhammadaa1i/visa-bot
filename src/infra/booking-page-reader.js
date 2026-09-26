@@ -5,11 +5,17 @@
  *   type: string,
  *   name: string,
  *   label: string,
+ *   ownLabel: string,
  *   required: boolean,
  *   hasValue: boolean,
- *   options: string[],
+ *   visible: boolean,
+ *   options: { value: string, text: string }[],
  * }} PageField
- * @typedef {{ handle: string, text: string }} PageButton
+ *   `ownLabel` is what names this one box (its <label>, the text right before it, placeholder),
+ *   without the row heading `label` adds: one heading can cover two boxes ("Full Name:
+ *   Family name [__] First name [__]" on the live form).
+ * @typedef {{ handle: string, text: string, formRank: number }} PageButton
+ *   `formRank`: 2 = in the form holding the fields, 1 = in some other form, 0 = outside any form.
  * @typedef {{ fields: PageField[], buttons: PageButton[], errors: string[], lines: string[] }} BookingPageSnapshot
  */
 
@@ -30,7 +36,9 @@ export async function readBookingPage(page) {
       return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
     };
     const REQUIRED_MARK = /必須|required|обязательн|majburiy|\*/i;
+    const OPTIONAL_MARK = /任意|optional|необязательн|ixtiyoriy/i;
     const REQUIRED_CLASS = /(^|[\s_-])req/i;
+    const FIELD_TAGS = 'input:not([type=hidden]), select, textarea';
 
     const rowLabel = (el) => {
       const dd = el.closest('dd');
@@ -39,16 +47,30 @@ export async function readBookingPage(page) {
       const th = td?.parentElement?.querySelector('th');
       return th ?? null;
     };
-    const labelOf = (el) => {
-      const parts = [];
-      if (el.id) parts.push(document.querySelector(`label[for="${CSS.escape(el.id)}"]`)?.innerText);
-      parts.push(el.closest('label')?.innerText, rowLabel(el)?.innerText, el.getAttribute('aria-label'), el.getAttribute('placeholder'));
-      return clean(parts.filter(Boolean).join(' | '));
+    const labelElementOf = (el) =>
+      (el.id && document.querySelector(`label[for="${CSS.escape(el.id)}"]`)) || el.closest('label') || null;
+    // Short text just before the box within its row, e.g. "Family name" in "Family name [__] First name [__]".
+    // Walks back through earlier siblings (then the parent's), stopping at anything holding another field.
+    const inlineTextOf = (el) => {
+      let node = el;
+      for (let depth = 0; depth < 3 && node && !node.matches?.('dd, td, th, dt, form, body'); depth++) {
+        for (let sib = node.previousSibling; sib; sib = sib.previousSibling) {
+          if (sib.nodeType === Node.ELEMENT_NODE && (sib.matches(FIELD_TAGS) || sib.querySelector(FIELD_TAGS))) return '';
+          const text = clean(sib.textContent);
+          if (text !== '') return text.length <= 40 ? text : '';
+        }
+        node = node.parentElement;
+      }
+      return '';
     };
+    const ownLabelOf = (el) =>
+      clean([labelElementOf(el)?.innerText, inlineTextOf(el), el.getAttribute('aria-label'), el.getAttribute('placeholder')].filter(Boolean).join(' | '));
+    const labelOf = (el) => clean([ownLabelOf(el), rowLabel(el)?.innerText].filter(Boolean).join(' | '));
     const isRequired = (el) => {
       const row = rowLabel(el);
+      if (el.required) return true;
+      if (row !== null && OPTIONAL_MARK.test(row.innerText) && !REQUIRED_MARK.test(row.innerText)) return false;
       return (
-        el.required ||
         el.getAttribute('aria-required') === 'true' ||
         REQUIRED_CLASS.test(el.className) ||
         (row !== null && (REQUIRED_MARK.test(row.innerText) || REQUIRED_CLASS.test(row.className)))
@@ -56,8 +78,11 @@ export async function readBookingPage(page) {
     };
 
     const SKIPPED_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'image', 'reset']);
+    // Styled forms often hide the real checkbox and show a drawn square in its <label> instead.
+    const isBox = (el) => el.tagName === 'INPUT' && (el.type === 'checkbox' || el.type === 'radio');
+    const isShown = (el) => isVisible(el) || (isBox(el) && labelElementOf(el) !== null && isVisible(labelElementOf(el)));
     const candidates = [...document.querySelectorAll('input, select, textarea')].filter(
-      (el) => !(el.tagName === 'INPUT' && SKIPPED_INPUT_TYPES.has(el.type)) && !el.disabled && !el.readOnly && isVisible(el)
+      (el) => !(el.tagName === 'INPUT' && SKIPPED_INPUT_TYPES.has(el.type)) && !el.disabled && !el.readOnly && isShown(el)
     );
 
     const fields = [];
@@ -78,9 +103,11 @@ export async function readBookingPage(page) {
         type,
         name: el.name || '',
         label: labelOf(el),
+        ownLabel: ownLabelOf(el),
         required: isRequired(el),
         hasValue: type === 'checkbox' ? el.checked : clean(el.value) !== '',
-        options: tag === 'select' ? [...el.options].map((o) => o.value) : [],
+        visible: isVisible(el),
+        options: tag === 'select' ? [...el.options].map((o) => ({ value: o.value, text: clean(o.text) })) : [],
       });
     });
     for (const [name, group] of radioGroups) {
@@ -92,17 +119,22 @@ export async function readBookingPage(page) {
         type: 'radio',
         name,
         label: clean(`${rowLabel(first)?.innerText ?? ''} | ${group.els.map(labelOf).join(' / ')}`),
+        ownLabel: clean(group.els.map(ownLabelOf).join(' / ')),
         required: group.els.some(isRequired),
         hasValue: group.els.some((el) => el.checked),
-        options: group.els.map((el) => el.value),
+        visible: group.els.some(isVisible),
+        options: group.els.map((el) => ({ value: el.value, text: ownLabelOf(el) })),
       });
     }
 
+    // Buttons in the form that holds the fields rank first, then any form's, then loose header/footer links.
+    const fieldForms = new Set(candidates.map((el) => el.closest('form')).filter(Boolean));
     const buttons = [...document.querySelectorAll('button, input[type=submit], input[type=button], a[class*="btn"]')]
       .filter(isVisible)
       .map((el, i) => {
         el.setAttribute('data-vb-button', String(i));
-        return { handle: `[data-vb-button="${i}"]`, text: clean(el.innerText || el.value) };
+        const form = el.closest('form');
+        return { handle: `[data-vb-button="${i}"]`, text: clean(el.innerText || el.value), formRank: fieldForms.has(form) ? 2 : form ? 1 : 0 };
       })
       .filter((b) => b.text !== '');
 

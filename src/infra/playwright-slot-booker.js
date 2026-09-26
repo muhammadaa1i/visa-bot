@@ -12,11 +12,16 @@ const MAX_PAGES = 6;
 const ATTEMPT_TIMEOUT_MS = 180_000;
 const STEP_TIMEOUT_MS = 20_000;
 
-const FORWARD_BUTTON = /確認|次へ|進む|予約|申込|申し込|送信|登録|同意|confirm|next|continue|proceed|reserve|book|submit|send|apply|agree|register|далее|продолж|подтвер|отправ|забронир|соглас|keyingi|davom|tasdiq|yubor|band qil|rozi/i;
+const FORWARD_BUTTON = /確認|次へ|進む|予約|申込|申し込|送信|登録|同意|完了|confirm|next|continue|proceed|reserve|book|submit|send|apply|agree|register|complete|далее|продолж|подтвер|отправ|забронир|соглас|keyingi|davom|tasdiq|yubor|band qil|rozi/i;
 const BACKWARD_BUTTON = /戻る|キャンセル|修正|取消|閉じる|back|cancel|edit|modify|return|close|назад|отмен|изменить|закрыть|orqaga|bekor|tahrir|yopish/i;
 const EMAIL_ACTION_NEEDED = /仮予約|本予約|(click|open|follow|visit).{0,40}(link|url)|(リンク|URL).{0,30}(クリック|アクセス)|перейдите по ссылке|havola(ga|ni)/i;
 const BOOKING_DONE = /予約.{0,6}完了|受付.{0,6}完了|予約番号|受付番号|(reservation|booking|appointment).{0,30}(complete|confirmed|accepted|successful)|thank you|бронирован.{0,20}(заверш|подтвержд)|запись.{0,20}(создан|подтвержд)|успешно|muvaffaqiyatli/i;
-const APPLICANT_DATA_KINDS = new Set([FIELD_KIND.FULL_NAME, FIELD_KIND.EMAIL, FIELD_KIND.EMAIL_CONFIRM]);
+const APPLICANT_DATA_KINDS = new Set([
+  FIELD_KIND.FULL_NAME, FIELD_KIND.FAMILY_NAME, FIELD_KIND.GIVEN_NAME, FIELD_KIND.EMAIL, FIELD_KIND.EMAIL_CONFIRM, FIELD_KIND.PHONE, FIELD_KIND.PASSPORT_NUMBER,
+]);
+// Each appears at most once per page. Two boxes both read as e.g. "full name" means the labels
+// that tell them apart weren't found, so filling them would put the same text in both.
+const ONE_PER_PAGE_KINDS = new Set([...APPLICANT_DATA_KINDS, FIELD_KIND.ARRIVAL_TIME]);
 
 // NOTHING_SENT → (applicant details submitted) → DETAILS_SENT → (confirmation page submitted) → FINAL_SENT.
 // After FINAL_SENT the booker only reads the result and never clicks again, so a "book another"
@@ -79,13 +84,14 @@ export class PlaywrightSlotBooker extends SlotBooker {
     const opened = await this.#openFirstAvailableSlot(page);
     if (opened === null) return { outcome: BOOKING_OUTCOME.NO_SLOT };
     const { appointment } = opened;
+    const slot = { appointmentTime: opened.time };
     // The form may live in a popup window; from here on every read and click happens there.
     page = opened.formPage;
 
     let phase = PHASE.NOTHING_SENT;
     for (let pageIndex = 0; pageIndex < MAX_PAGES; pageIndex++) {
       const current = await readBookingPage(page);
-      const decision = await this.#decide(page, current, previous, applicant, phase);
+      const decision = await this.#decide(page, current, previous, applicant, slot, phase);
       this.logger.info('booking_page', { pageIndex, phase, fields: current.fields.length, action: decision.action });
 
       if (decision.action === 'done') return { ...decision.result, appointment };
@@ -107,8 +113,9 @@ export class PlaywrightSlotBooker extends SlotBooker {
   }
 
   /**
-   * @returns {Promise<{ appointment: string, formPage: import('playwright').Page } | null>}
-   *   a readable appointment description and the page the form continues on, or null if nothing is open
+   * @returns {Promise<{ appointment: string, time: string, formPage: import('playwright').Page } | null>}
+   *   a readable appointment description, the slot's time ('' if unknown) and the page the form
+   *   continues on, or null if nothing is open
    */
   async #openFirstAvailableSlot(page) {
     for (let month = 0; month < this.monthsToCheck; month++) {
@@ -131,7 +138,7 @@ export class PlaywrightSlotBooker extends SlotBooker {
           formPage = await clickTimeSlot(page, openTime);
         }
         const appointment = [monthLabel, day, time].map((s) => s.replace(/\s+/g, ' ').trim()).filter(Boolean).join(' ');
-        return { appointment, formPage };
+        return { appointment, time: time.replace(/\s+/g, ''), formPage };
       }
       const next = page.locator(NEXT_MONTH);
       if ((await next.count()) === 0) return null;
@@ -146,7 +153,7 @@ export class PlaywrightSlotBooker extends SlotBooker {
    * @param {import('./booking-page-reader.js').BookingPageSnapshot} current
    * @param {import('./booking-page-reader.js').BookingPageSnapshot} previous
    */
-  async #decide(page, current, previous, applicant, phase) {
+  async #decide(page, current, previous, applicant, slot, phase) {
     const previousLines = new Set(previous.lines);
     const previousText = previous.lines.join('\n');
     const newLines = current.lines.filter((l) => !previousLines.has(l));
@@ -160,11 +167,16 @@ export class PlaywrightSlotBooker extends SlotBooker {
 
     const plan = current.fields.map((field) => {
       const kind = classifyField(field);
-      return { field, kind, value: kind === null ? null : valueFor(kind, applicant, field) };
+      return { field, kind, value: kind === null ? null : valueFor(kind, applicant, field, slot) };
     });
+    const duplicated = plan.filter((p) => ONE_PER_PAGE_KINDS.has(p.kind) && plan.filter((q) => q.kind === p.kind).length > 1);
+    if (duplicated.length > 0) {
+      return { action: 'stop', reason: "the bot can't tell some fields apart", unknownFields: duplicated.map((p) => p.field.label || p.field.name) };
+    }
     const asksForApplicantData = plan.some((p) => APPLICANT_DATA_KINDS.has(p.kind));
     const unknownRequired = plan.filter((p) => p.field.required && !p.field.hasValue && p.value === null);
-    const forward = current.buttons.find((b) => FORWARD_BUTTON.test(b.text) && !BACKWARD_BUTTON.test(b.text));
+    const forwardButtons = current.buttons.filter((b) => FORWARD_BUTTON.test(b.text) && !BACKWARD_BUTTON.test(b.text));
+    const forward = forwardButtons.reduce((best, b) => (best === undefined || b.formRank > best.formRank ? b : best), undefined);
 
     if (phase !== PHASE.NOTHING_SENT) {
       if (asksForApplicantData) return { action: 'stop', reason: "the site asked for the applicant's details again" };
@@ -187,7 +199,7 @@ export class PlaywrightSlotBooker extends SlotBooker {
     for (const { field, value } of plan) {
       if (value === null) continue;
       const target = page.locator(field.handle).first();
-      if (field.type === 'checkbox') await target.check();
+      if (field.type === 'checkbox') await tick(target, field.visible);
       else if (field.tag === 'select') await target.selectOption(String(value));
       else await target.fill(String(value));
     }
@@ -195,6 +207,17 @@ export class PlaywrightSlotBooker extends SlotBooker {
     const nextPhase = phase === PHASE.NOTHING_SENT && asksForApplicantData ? PHASE.DETAILS_SENT : phase;
     return { action: 'continue', button: forward.handle, nextPhase };
   }
+}
+
+// A checkbox hidden behind a drawn square can't be clicked where it sits; clicking the element
+// itself still ticks it and fires the page's change handlers, as clicking its label would.
+async function tick(checkbox, visible) {
+  if (visible) {
+    await checkbox.check();
+    return;
+  }
+  await checkbox.evaluate((el) => { if (!el.checked) el.click(); });
+  if (!(await checkbox.isChecked())) throw new Error('a checklist box could not be ticked');
 }
 
 // On the live site the time slot is an icon-only link (seen 2026-09-25) whose href carries the time:

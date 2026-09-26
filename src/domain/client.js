@@ -14,13 +14,18 @@ export const CLIENT_STATUS = Object.freeze({
 });
 
 /**
- * @param {{ telegramChatId: number, fullName: string, email: string, visaCategory: string }} input
+ * @param {import('./applicant-details.js').ApplicantDetails & { telegramChatId: number, visaCategory: string }} input
  */
-export function createClient({ telegramChatId, fullName, email, visaCategory }) {
+export function createClient({ telegramChatId, familyName, firstName, phone, passportNumber, email, visaCategory }) {
   return {
     id: randomUUID(),
     telegramChatId,
-    fullName,
+    familyName,
+    firstName,
+    // For messages and the owner's lists; the booking form gets the two name parts separately.
+    fullName: `${familyName} ${firstName}`,
+    phone,
+    passportNumber,
     email,
     visaCategory,
     status: CLIENT_STATUS.PENDING,

@@ -3,8 +3,10 @@ import http from 'http';
 // Minimal stand-in for the embassy site. Every page carries the same header, step indicator
 // (which literally contains "予約完了") and a persistent warning with an "error" class, to prove
 // the booker only reacts to what's new on each page.
+// The header link reads like a forward button ("予約確認") but sits outside every form, so the
+// booker must prefer the form's own button.
 const COMMON = `
-  <div class="header">Embassy of Japan in Uzbekistan</div>
+  <div class="header">Embassy of Japan in Uzbekistan <a class="c_btn" href="/calendar">予約確認 / Check reservation</a></div>
   <ol class="steps"><li>入力 / Input</li><li>確認 / Confirm</li><li>予約完了 / Reservation complete</li></ol>
   <p class="c_txt_error">If your selection does not match your input information, your appointment will be canceled.</p>`;
 
@@ -20,10 +22,10 @@ function calendar(open, dateHref) {
 
 // Mirrors the live site's day view (captured 2026-09-25): icon-only time links, and the open one
 // carries js_window_open_for_time, which makes the site's script open the form in a popup window.
-const dayView = () => page(`<table>
+const dayView = (formPath) => page(`<table>
     <tr><th>14:30</th><td><a class="c_cal_time_cell js_move_reserve js_not_move"><img src="/assets/images/user/icon_disabled.svg" width="24" height="24"></a></td></tr>
-    <tr><th>15:00</th><td><a href="/form?date=2026%2F10%2F14&amp;time_from=15%3A00" class="c_cal_time_cell js_move_reserve js_check_in_stock js_window_open_for_time"
-      data-url="/form?date=2026%2F10%2F14&amp;time_from=15%3A00&amp;isPopUpWindow=1"><img src="/assets/images/user/icon_circle.svg" width="24" height="24"></a></td></tr>
+    <tr><th>15:00</th><td><a href="${formPath}?date=2026%2F10%2F14&amp;time_from=15%3A00" class="c_cal_time_cell js_move_reserve js_check_in_stock js_window_open_for_time"
+      data-url="${formPath}?date=2026%2F10%2F14&amp;time_from=15%3A00&amp;isPopUpWindow=1"><img src="/assets/images/user/icon_circle.svg" width="24" height="24"></a></td></tr>
   </table>
   <script>
     document.querySelector('.js_window_open_for_time').addEventListener('click', (e) => {
@@ -31,6 +33,42 @@ const dayView = () => page(`<table>
       window.open(e.currentTarget.dataset.url, 'reserve', 'width=900,height=700');
     });
   </script>`);
+
+// The live two-page form (screenshots 2026-09-25), in the site's dl.c_form / dt.c_form_term /
+// dd.c_form_desc layout. Field names are deliberately uninformative so labels have to do the work.
+const ARRIVAL_TIMES = ['9：30', '10：00', '10：30', '11：00', '14：30', '15：00'];
+const REQ = '<span class="c_label_req">必須</span>';
+const embassyChecklistPage = (error = '') => page(`${error}<form method="post" action="/reservations/user/guest">
+  <div style="border:1px solid red"><p>При подаче документов просим вас под личную ответственность обеспечить подачу подлинных документов.</p></div>
+  <dl class="c_form">
+    <dt class="c_form_term">${REQ}<span class="c_form_label">確認事項 / Checklist / Tasdiqlash bandlari / Пункты для подтверждения</span></dt>
+    <dd class="c_form_desc"><ul class="c_form_desc_chklist">${[1, 2, 3].map((n) => `
+      <li class="c_form_desc_chkitem"><label><input type="checkbox" name="check[]" value="${n}" style="display:none"><span style="display:inline-block;width:16px;height:16px;border:1px solid #999"></span> ${n}</label></li>`).join('')}
+    </ul><p>上記内容を読み、理解された方は、上記チェックボックスにチェックをしてください。If you have read and understood the above content, please check the box above.</p></dd>
+    <dt class="c_form_term">${REQ}<span class="c_form_label">来館時間を選択してください。Please select your arrival time (for Visa)</span></dt>
+    <dd class="c_form_desc"><select name="arrival" class="c_form_input_req"><option value=""></option>${ARRIVAL_TIMES.map((t, i) => `<option value="${i + 1}">${t}</option>`).join('')}</select>
+      <p>ご希望の来館時間を選択してください。Please select your preferred arrival time.</p></dd>
+  </dl>
+  <a class="c_btn" href="/calendar">Back</a> <button type="submit" class="c_btn">Next</button></form>`);
+const embassyApplicantPage = (error = '') => page(`${error}<form method="post" action="/confirm">
+  <dl class="c_form">
+    <dt class="c_form_term">${REQ}<span class="c_form_label">Full Name/Ism va familiya(Lotin alifbosida)/Имя и фамилия(латинице)</span></dt>
+    <dd class="c_form_desc"><div class="c_form_group"><span>Family name</span> <input type="text" name="name1" class="c_form_input_req"> <span>First name</span> <input type="text" name="name2" class="c_form_input_req"></div>
+      <p>代理人申請の場合は、書類提出者氏名を入力してください。For proxy applications, please enter the name of the person submitting the documents.</p></dd>
+    <dt class="c_form_term">${REQ}<span class="c_form_label">Phone number/Telefon raqami /Номер телефона</span></dt>
+    <dd class="c_form_desc"><input type="text" name="free1" class="c_form_input_req"></dd>
+    <dt class="c_form_term">${REQ}<span class="c_form_label">Email address / Elektron pochta manzili / Адрес электронной почты</span></dt>
+    <dd class="c_form_desc"><input type="text" name="email" class="c_form_input_req"></dd>
+    <dt class="c_form_term">${REQ}<span class="c_form_label">Passport number / Pasport raqami / Номер паспорта</span></dt>
+    <dd class="c_form_desc"><input type="text" name="free2" class="c_form_input_req"><p>現有パスポート番号を入力してください。Please enter your current passport number.</p></dd>
+    <dt class="c_form_term">${REQ}<span class="c_form_label">メールアドレス(確認)/ Email address (re-enter)</span></dt>
+    <dd class="c_form_desc"><input type="text" name="email_confirm" class="c_form_input_req"></dd>
+    <dt class="c_form_term"><span class="c_label_any">任意</span><span class="c_form_label">備考/Remarks/Izohlar/Примечания</span></dt>
+    <dd class="c_form_desc">${[1, 2, 3, 4].map((n) => `<input type="text" name="note${n}" class="c_form_input_req">`).join('')}
+      <p>For proxy applications, please enter the travel agency name, e.g., AAA Travel.</p></dd>
+  </dl>
+  <a class="c_btn" href="/reservations/form">Back</a> <button type="submit" class="c_btn">Next</button></form>`);
+const fieldError = '<p class="c_form_error">必須項目を入力してください / Please fill in the required items.</p>';
 
 const FORMS = {
   simple: `
@@ -57,19 +95,28 @@ const FORMS = {
 };
 
 export function startFakeSite(scenario) {
-  const stats = { finalSubmissions: 0, detailSubmissions: 0 };
+  const stats = { finalSubmissions: 0, detailSubmissions: 0, checklist: null, applicant: null };
   const form = FORMS[scenario] ?? FORMS.simple;
 
   const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', (c) => (body += c));
     req.on('end', () => {
-      const data = Object.fromEntries(new URLSearchParams(body));
+      const params = new URLSearchParams(body);
+      const data = Object.fromEntries(params);
       res.setHeader('content-type', 'text/html; charset=utf-8');
       const url = req.url.split('?')[0];
 
-      if (url === '/calendar') return res.end(calendar(scenario !== 'no-open', scenario === 'popup' ? '/day' : '/form'));
-      if (url === '/day') return res.end(dayView());
+      const usesDayView = scenario === 'popup' || scenario === 'embassy';
+      if (url === '/calendar') return res.end(calendar(scenario !== 'no-open', usesDayView ? '/day' : '/form'));
+      if (url === '/day') return res.end(dayView(scenario === 'embassy' ? '/reservations/form' : '/form'));
+
+      if (url === '/reservations/form') return res.end(embassyChecklistPage());
+      if (url === '/reservations/user/guest') {
+        stats.checklist = { checked: params.getAll('check[]'), arrival: ARRIVAL_TIMES[Number(data.arrival) - 1] ?? null };
+        if (stats.checklist.checked.length !== 3 || !stats.checklist.arrival) return res.end(embassyChecklistPage(fieldError));
+        return res.end(embassyApplicantPage());
+      }
 
       if (url === '/form') {
         if (scenario === 'taken') return res.end(page(`<div class="c_form_error">This slot is no longer available.</div><a class="c_btn" href="/calendar">戻る / Back</a>`));
@@ -79,13 +126,18 @@ export function startFakeSite(scenario) {
 
       if (url === '/confirm') {
         stats.detailSubmissions++;
+        if (scenario === 'embassy') {
+          stats.applicant = data;
+          const missing = ['name1', 'name2', 'free1', 'email', 'free2'].some((k) => !data[k]) || data.email !== data.email_confirm;
+          if (missing) return res.end(embassyApplicantPage(fieldError));
+        }
         if (scenario === 'rejected') {
           return res.end(page(`<p class="error-message">This e-mail address already has a reservation.</p>
             <form method="post" action="/confirm">${form}<button type="submit">確認画面へ / Confirm</button></form>`));
         }
         const hidden = Object.entries(data).map(([k, v]) => `<input type="hidden" name="${k}" value="${v}">`).join('');
         return res.end(page(`<h2>Please check your reservation before it is confirmed</h2>
-          <table><tr><th>Name</th><td>${data.name ?? ''}</td></tr><tr><th>E-mail</th><td>${data.email ?? ''}</td></tr></table>
+          <table><tr><th>Name</th><td>${data.name ?? `${data.name1 ?? ''} ${data.name2 ?? ''}`}</td></tr><tr><th>E-mail</th><td>${data.email ?? ''}</td></tr></table>
           <form method="post" action="/complete">${hidden}
             <button type="submit" formaction="/form">戻る / Back</button>
             <button type="submit">予約する / Reserve</button></form>`));

@@ -1,5 +1,6 @@
 import { CLIENT_STATUS } from '../domain/client.js';
 import { BOOKING_OUTCOME } from '../domain/booking-outcome.js';
+import { hasAllApplicantDetails } from '../domain/applicant-details.js';
 
 const PAUSE_BETWEEN_CLIENTS_MS = 3000;
 
@@ -46,11 +47,30 @@ export class BookSlotsHandler {
       return;
     }
 
-    for (const [index, client] of pending.entries()) {
+    // An incomplete record would make the booker hold back, which stops the whole queue, so set it
+    // aside first; the applicant is asked to register again (a new, complete record).
+    const bookable = [];
+    for (const client of pending) {
+      if (hasAllApplicantDetails(client)) bookable.push(client);
+      else await this.#setAsideIncomplete(client);
+    }
+
+    for (const [index, client] of bookable.entries()) {
       if (index > 0) await new Promise((resolve) => setTimeout(resolve, PAUSE_BETWEEN_CLIENTS_MS));
       const keepGoing = await this.#bookOne(client);
       if (!keepGoing) break;
     }
+  }
+
+  async #setAsideIncomplete(client) {
+    const reason = 'registered before phone and passport number were collected';
+    await this.clientRepository.update({ ...client, status: CLIENT_STATUS.FAILED, lastBookingError: reason });
+    this.logger.warn('client_set_aside_incomplete', { clientId: client.id });
+    await this.#tellClient(
+      client,
+      `⚠️ The embassy form now needs your phone number and passport number, which we don't have for you. Please send /register again so we can book for you.`
+    );
+    await this.#tellOwner(`⚠️ Skipped ${client.fullName}: ${reason}. They've been asked to /register again.`);
   }
 
   /** @returns {Promise<boolean>} whether to continue with the next client */

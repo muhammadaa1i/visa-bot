@@ -51,6 +51,11 @@ export const APPLICANT_FIELDS = Object.freeze({
   email,
 });
 
+/** Clients registered before 2026-09-26 have only a full name and email, which the form can't take. */
+export function hasAllApplicantDetails(client) {
+  return Object.keys(APPLICANT_FIELDS).every((key) => typeof client[key] === 'string' && client[key] !== '');
+}
+
 /**
  * @typedef {{ familyName: string, firstName: string, phone: string, passportNumber: string, email: string }} ApplicantDetails
  * @param {Partial<Record<keyof ApplicantDetails, string>>} input

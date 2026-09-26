@@ -52,12 +52,15 @@ for (const [name, { scenario = name, applicant: who = applicant, check, ...expec
   console.log(`     appointment=${JSON.stringify(result.appointment)} reason=${JSON.stringify(result.reason)} unknown=${JSON.stringify(result.unknownFields)}`);
 }
 
-// Full handler run: two pending clients, fake repo + notifier, simple form.
+// Full handler run: an old incomplete record (set aside, not blocking), two complete pending
+// clients, fake repo + notifier, simple form.
 {
   const site = await startFakeSite('simple');
+  const details = { phone: '+998901234567', passportNumber: 'AB1234567' };
   const store = [
-    { id: 'c1', telegramChatId: 111, fullName: 'FIRST CLIENT', email: 'first@example.com', status: 'pending' },
-    { id: 'c2', telegramChatId: 222, fullName: 'SECOND CLIENT', email: 'second@example.com', status: 'pending' },
+    { id: 'c0', telegramChatId: 100, fullName: 'OLD CLIENT', email: 'old@example.com', status: 'pending' },
+    { id: 'c1', telegramChatId: 111, familyName: 'CLIENT', firstName: 'FIRST', fullName: 'FIRST CLIENT', email: 'first@example.com', ...details, status: 'pending' },
+    { id: 'c2', telegramChatId: 222, familyName: 'CLIENT', firstName: 'SECOND', fullName: 'SECOND CLIENT', email: 'second@example.com', ...details, status: 'pending' },
     { id: 'c3', telegramChatId: 333, fullName: 'ALREADY BOOKED', email: 'x@example.com', status: 'booked' },
   ];
   const statusHistory = [];
@@ -77,7 +80,7 @@ for (const [name, { scenario = name, applicant: who = applicant, check, ...expec
   await Promise.all([handler.handle(), handler.handle()]); // second call must be ignored while running
   site.server.close();
 
-  const ok = statusHistory.join(',') === 'c1:booking,c1:booked,c2:booking,c2:booked' && site.stats.finalSubmissions === 2;
+  const ok = statusHistory.join(',') === 'c0:failed,c1:booking,c1:booked,c2:booking,c2:booked' && site.stats.finalSubmissions === 2;
   if (!ok) failures++;
   console.log(`${ok ? 'PASS' : 'FAIL'} handler queue: statuses=${statusHistory.join(',')} finalSubmissions=${site.stats.finalSubmissions}`);
   messages.forEach((m) => console.log(`     ${m}`));
